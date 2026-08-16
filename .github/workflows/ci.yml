@@ -36,3 +36,10 @@ jobs:
 
       - name: Run tests
         run: pytest -v
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t student-registration-app:${{ github.sha }} \
+            -t student-registration-app:latest \
+            .
