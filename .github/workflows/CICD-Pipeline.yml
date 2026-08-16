@@ -1,5 +1,7 @@
 name: Student Registration APP CI/CD Pipeline
 
+run-name: Student Registration App CI/CD Pipeline
+
 on:
   push:
     branches:
