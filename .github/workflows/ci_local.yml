@@ -61,7 +61,6 @@ jobs:
       - name: Run tests
         run: |
           pytest -v
-          exit 1
 
       # --------------------------------------------------
       # 6. Build Docker image
