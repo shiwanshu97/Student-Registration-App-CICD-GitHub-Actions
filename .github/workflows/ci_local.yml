@@ -1,4 +1,4 @@
-name: Student Registration CI/CD
+name: Student Registration APP CI/CD Pipeline
 
 on:
   push:
