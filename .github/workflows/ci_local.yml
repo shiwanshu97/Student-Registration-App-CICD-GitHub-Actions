@@ -164,6 +164,7 @@ jobs:
           docker pull "$IMAGE"
 
           echo "Checking MongoDB container..."
+
           if ! docker ps --format '{{.Names}}' | grep -q '^mongodb$'; then
             echo "ERROR: MongoDB container is not running."
             echo "Deployment stopped to protect the database."
@@ -171,6 +172,7 @@ jobs:
           fi
 
           echo "Checking Docker network..."
+
           if ! docker network inspect student-app-network >/dev/null 2>&1; then
             echo "ERROR: student-app-network does not exist."
             exit 1
@@ -191,24 +193,32 @@ jobs:
             "$IMAGE"
 
           echo "Waiting for application to start..."
+
           sleep 10
 
           echo "Checking application container..."
+
           docker ps --filter "name=student-registration-app"
 
           echo "Checking application health..."
 
           for i in {1..10}; do
+
             if curl -fsS http://localhost:5000/health; then
+
               echo
               echo "========================================="
               echo "Deployment successful!"
               echo "========================================="
+
               exit 0
+
             fi
 
             echo "Health check attempt $i failed."
+
             sleep 3
+
           done
 
           echo "========================================="
@@ -216,6 +226,7 @@ jobs:
           echo "========================================="
 
           echo "Application container logs:"
+
           docker logs --tail 100 student-registration-app
 
           exit 1
@@ -251,6 +262,29 @@ jobs:
                 "Body": {
                   "Text": {
                     "Data": "Deployment successful!\n\nApplication: Student Registration App\nEnvironment: EC2\nImage Tag: ${{ github.sha }}\nBranch: ${{ github.ref_name }}\nCommit: ${{ github.sha }}\n\nThe application has been successfully deployed to EC2."
+                  }
+                }
+              }
+            }' \
+            --region "${{ secrets.SES_REGION }}"
+
+      # --------------------------------------------------
+      # 16. Send deployment failure email using Amazon SES
+      # --------------------------------------------------
+      - name: Send deployment failure email
+        if: failure()
+        run: |
+          aws sesv2 send-email \
+            --from-email-address "${{ secrets.SES_FROM_EMAIL }}" \
+            --destination '{"ToAddresses":["${{ secrets.SES_TO_EMAIL }}"]}' \
+            --content '{
+              "Simple": {
+                "Subject": {
+                  "Data": "Student Registration App - Deployment FAILED"
+                },
+                "Body": {
+                  "Text": {
+                    "Data": "Deployment FAILED!\n\nApplication: Student Registration App\nEnvironment: EC2\nImage Tag: ${{ github.sha }}\nBranch: ${{ github.ref_name }}\nCommit: ${{ github.sha }}\n\nOne or more CI/CD pipeline steps failed.\n\nPlease check the GitHub Actions workflow logs for the exact failure details.\n\nWorkflow: ${{ github.workflow }}\nRun ID: ${{ github.run_id }}"
                   }
                 }
               }
