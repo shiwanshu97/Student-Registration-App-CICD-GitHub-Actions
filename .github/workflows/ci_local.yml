@@ -29,6 +29,13 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -43,3 +50,27 @@ jobs:
             -t student-registration-app:${{ github.sha }} \
             -t student-registration-app:latest \
             .
+
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region ap-south-1 | \
+          docker login --username AWS --password-stdin \
+          360999005537.dkr.ecr.ap-south-1.amazonaws.com
+
+      - name: Tag Docker image for ECR
+        run: |
+          docker tag \
+            student-registration-app:${{ github.sha }} \
+            360999005537.dkr.ecr.ap-south-1.amazonaws.com/student-registration-app:${{ github.sha }}
+
+          docker tag \
+            student-registration-app:latest \
+            360999005537.dkr.ecr.ap-south-1.amazonaws.com/student-registration-app:latest
+
+      - name: Push Docker image to Amazon ECR
+        run: |
+          docker push \
+            360999005537.dkr.ecr.ap-south-1.amazonaws.com/student-registration-app:${{ github.sha }}
+
+          docker push \
+            360999005537.dkr.ecr.ap-south-1.amazonaws.com/student-registration-app:latest
