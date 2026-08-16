@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: Test, Build and Push to ECR
+    name: Test, Build, Push to ECR and Deploy to EC2
     runs-on: ubuntu-latest
 
     services:
@@ -22,6 +22,7 @@ jobs:
       SECRET_KEY: test-secret-key
 
     steps:
+
       # --------------------------------------------------
       # 1. Checkout source code
       # --------------------------------------------------
@@ -232,3 +233,26 @@ jobs:
             "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
 
           echo "CI/CD pipeline completed successfully."
+
+      # --------------------------------------------------
+      # 15. Send deployment success email using Amazon SES
+      # --------------------------------------------------
+      - name: Send deployment success email
+        if: success()
+        run: |
+          aws sesv2 send-email \
+            --from-email-address "${{ secrets.SES_FROM_EMAIL }}" \
+            --destination '{"ToAddresses":["${{ secrets.SES_TO_EMAIL }}"]}' \
+            --content '{
+              "Simple": {
+                "Subject": {
+                  "Data": "Student Registration App - Deployment Successful"
+                },
+                "Body": {
+                  "Text": {
+                    "Data": "Deployment successful!\n\nApplication: Student Registration App\nEnvironment: EC2\nImage Tag: ${{ github.sha }}\nBranch: ${{ github.ref_name }}\nCommit: ${{ github.sha }}\n\nThe application has been successfully deployed to EC2."
+                  }
+                }
+              }
+            }' \
+            --region "${{ secrets.SES_REGION }}"
