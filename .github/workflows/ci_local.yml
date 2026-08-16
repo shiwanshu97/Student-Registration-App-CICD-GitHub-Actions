@@ -8,6 +8,7 @@ on:
 
 jobs:
   test:
+    name: Test, Build and Push to ECR
     runs-on: ubuntu-latest
 
     services:
@@ -21,14 +22,23 @@ jobs:
       SECRET_KEY: test-secret-key
 
     steps:
+      # --------------------------------------------------
+      # 1. Checkout source code
+      # --------------------------------------------------
       - name: Checkout source code
         uses: actions/checkout@v4
 
+      # --------------------------------------------------
+      # 2. Set up Python
+      # --------------------------------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
 
+      # --------------------------------------------------
+      # 3. Configure AWS credentials
+      # --------------------------------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -36,14 +46,24 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-south-1
 
+      # --------------------------------------------------
+      # 4. Install Python dependencies
+      # --------------------------------------------------
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # --------------------------------------------------
+      # 5. Run automated tests
+      # --------------------------------------------------
       - name: Run tests
-        run: pytest -v
+        run: |
+          pytest -v
 
+      # --------------------------------------------------
+      # 6. Build Docker image
+      # --------------------------------------------------
       - name: Build Docker image
         run: |
           docker build \
@@ -51,12 +71,18 @@ jobs:
             -t student-registration-app:latest \
             .
 
+      # --------------------------------------------------
+      # 7. Login to Amazon ECR
+      # --------------------------------------------------
       - name: Login to Amazon ECR
         run: |
           aws ecr get-login-password --region ap-south-1 | \
           docker login --username AWS --password-stdin \
           360999005537.dkr.ecr.ap-south-1.amazonaws.com
 
+      # --------------------------------------------------
+      # 8. Tag Docker image for ECR
+      # --------------------------------------------------
       - name: Tag Docker image for ECR
         run: |
           docker tag \
@@ -67,6 +93,9 @@ jobs:
             student-registration-app:latest \
             360999005537.dkr.ecr.ap-south-1.amazonaws.com/student-registration-app:latest
 
+      # --------------------------------------------------
+      # 9. Push Docker image to Amazon ECR
+      # --------------------------------------------------
       - name: Push Docker image to Amazon ECR
         run: |
           docker push \
@@ -74,3 +103,132 @@ jobs:
 
           docker push \
             360999005537.dkr.ecr.ap-south-1.amazonaws.com/student-registration-app:latest
+
+      # --------------------------------------------------
+      # 10. Prepare SSH configuration
+      # --------------------------------------------------
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+
+          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key.pem
+
+          chmod 600 ~/.ssh/ec2_key.pem
+
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      # --------------------------------------------------
+      # 11. Generate ECR login password
+      # --------------------------------------------------
+      - name: Generate ECR login password
+        run: |
+          aws ecr get-login-password \
+            --region ap-south-1 > /tmp/ecr_password
+
+      # --------------------------------------------------
+      # 12. Login to ECR from EC2
+      # --------------------------------------------------
+      - name: Login to ECR on EC2
+        run: |
+          cat /tmp/ecr_password | \
+          ssh \
+            -i ~/.ssh/ec2_key.pem \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "docker login \
+              --username AWS \
+              --password-stdin \
+              360999005537.dkr.ecr.ap-south-1.amazonaws.com"
+
+      # --------------------------------------------------
+      # 13. Deploy application to EC2
+      # --------------------------------------------------
+      - name: Deploy application to EC2
+        run: |
+          ssh \
+            -i ~/.ssh/ec2_key.pem \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "IMAGE_TAG='${{ github.sha }}' bash -s" <<'REMOTE_SCRIPT'
+
+          set -e
+
+          echo "========================================="
+          echo "Starting deployment"
+          echo "========================================="
+
+          echo "Using image tag: $IMAGE_TAG"
+
+          IMAGE="360999005537.dkr.ecr.ap-south-1.amazonaws.com/student-registration-app:${IMAGE_TAG}"
+
+          echo "Pulling new Docker image..."
+          docker pull "$IMAGE"
+
+          echo "Checking MongoDB container..."
+          if ! docker ps --format '{{.Names}}' | grep -q '^mongodb$'; then
+            echo "ERROR: MongoDB container is not running."
+            echo "Deployment stopped to protect the database."
+            exit 1
+          fi
+
+          echo "Checking Docker network..."
+          if ! docker network inspect student-app-network >/dev/null 2>&1; then
+            echo "ERROR: student-app-network does not exist."
+            exit 1
+          fi
+
+          echo "Removing old application container..."
+
+          docker rm -f student-registration-app 2>/dev/null || true
+
+          echo "Starting new application container..."
+
+          docker run -d \
+            --name student-registration-app \
+            --network student-app-network \
+            -p 5000:5000 \
+            -e MONGO_URI=mongodb://mongodb:27017/student_db \
+            -e SECRET_KEY=test-secret-key \
+            "$IMAGE"
+
+          echo "Waiting for application to start..."
+          sleep 10
+
+          echo "Checking application container..."
+          docker ps --filter "name=student-registration-app"
+
+          echo "Checking application health..."
+
+          for i in {1..10}; do
+            if curl -fsS http://localhost:5000/health; then
+              echo
+              echo "========================================="
+              echo "Deployment successful!"
+              echo "========================================="
+              exit 0
+            fi
+
+            echo "Health check attempt $i failed."
+            sleep 3
+          done
+
+          echo "========================================="
+          echo "Deployment failed!"
+          echo "========================================="
+
+          echo "Application container logs:"
+          docker logs --tail 100 student-registration-app
+
+          exit 1
+
+          REMOTE_SCRIPT
+
+      # --------------------------------------------------
+      # 14. Final deployment verification
+      # --------------------------------------------------
+      - name: Verify deployment
+        run: |
+          ssh \
+            -i ~/.ssh/ec2_key.pem \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
+
+          echo "CI/CD pipeline completed successfully."
